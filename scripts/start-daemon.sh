@@ -2,7 +2,8 @@
 
 set -euo pipefail
 
-PROJECT_DIR="/home/lijiang/桌面/code/speak-it"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 BINARY="$PROJECT_DIR/target/release/speak-it"
 PID_FILE="$PROJECT_DIR/speak-it.pid"
 
