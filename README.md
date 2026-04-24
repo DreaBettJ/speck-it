@@ -8,7 +8,7 @@
 - 松开 `F8` 后立即停止录音
 - 将音频上传到 BigModel 语音转文本接口，模型固定为 `glm-asr-2512`
 - 等说完后再进行整段转写
-- 通过 `xdotool` 把最终识别结果一次性注入当前聚焦的 X11 窗口
+- 先把最终识别结果写入 X11 剪贴板，再通过 `xdotool` 粘贴到当前聚焦窗口
 
 当前实现不会再劫持空格键，正常输入空格不会受影响。
 
@@ -19,7 +19,7 @@
 - 仅支持 Linux
 - 仅支持 X11
 - 录音依赖外部工具：`ffmpeg` 或 `arecord`
-- 文本注入依赖 `xdotool`
+- 文本注入依赖 `xclip` 或 `xsel` 写入剪贴板，并通过 `xdotool` 触发粘贴
 - API Key 从环境变量 `ZHIPUAI_API_KEY` 读取
 
 暂不支持 Wayland。
@@ -37,19 +37,20 @@ speak-it once <audio-file>
 - Rust 工具链
 - X11 桌面会话
 - `xdotool`
+- `xclip` 或 `xsel`
 - `ffmpeg` 或 `arecord`
 - BigModel API Key，并写入 `ZHIPUAI_API_KEY`
 
 Debian / Ubuntu 示例安装：
 
 ```bash
-sudo apt install xdotool ffmpeg
+sudo apt install xdotool xclip ffmpeg
 ```
 
 如果你想使用 ALSA 录音工具：
 
 ```bash
-sudo apt install xdotool alsa-utils
+sudo apt install xdotool xclip alsa-utils
 ```
 
 ## 构建
@@ -84,6 +85,7 @@ cargo run -- doctor
 - `DISPLAY`
 - 是否处于 X11 会话
 - `xdotool`
+- `xclip` 或 `xsel`
 - 是否存在可用录音工具
 
 ## 使用方式
@@ -155,6 +157,7 @@ cargo test
 
 - 缺少 `ZHIPUAI_API_KEY`
 - 缺少 `xdotool`
+- 缺少 `xclip` 或 `xsel`
 - `ffmpeg` 和 `arecord` 都不存在
 - 非 X11 会话
 - 空白语音
@@ -173,4 +176,5 @@ cargo test
 - `x11rb` 做 X11 热键监听
 - `reqwest` 调用 BigModel API
 - `tokio` 提供异步运行时
+- `xclip` 或 `xsel` 写入剪贴板，`xdotool` 触发粘贴
 - 当前目录保存录音文件，文件名使用随机 UUID

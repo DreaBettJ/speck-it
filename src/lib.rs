@@ -26,6 +26,7 @@ pub const HOTKEY_NAME: &str = "F8";
 pub const RECORDING_HISTORY_LIMIT: usize = 10;
 pub const LOG_FILE_NAME: &str = "speak-it.log";
 pub const FILLER_TOKENS: &[&str] = &["n", "r", "en", "er", "嗯", "呃", "额", "啊"];
+pub const CLIPBOARD_PASTE_DELAY: Duration = Duration::from_millis(80);
 
 static LOG_FILE_PATH: OnceLock<PathBuf> = OnceLock::new();
 
@@ -91,6 +92,21 @@ impl Display for RecorderKind {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClipboardTool {
+    Xclip,
+    Xsel,
+}
+
+impl Display for ClipboardTool {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ClipboardTool::Xclip => write!(f, "xclip"),
+            ClipboardTool::Xsel => write!(f, "xsel"),
+        }
+    }
+}
+
 pub struct RecorderProcess {
     child: Child,
     kind: RecorderKind,
@@ -140,6 +156,7 @@ pub struct DependencyReport {
     pub x11_display_present: bool,
     pub x11_session_detected: bool,
     pub xdotool_present: bool,
+    pub clipboard_tool: Option<ClipboardTool>,
     pub recorder: Option<RecorderKind>,
 }
 
@@ -157,6 +174,9 @@ impl DependencyReport {
         if !self.xdotool_present {
             bail!("missing xdotool");
         }
+        if self.clipboard_tool.is_none() {
+            bail!("missing clipboard tool; install xclip or xsel");
+        }
         if self.recorder.is_none() {
             bail!("missing recorder; install ffmpeg or arecord");
         }
@@ -173,6 +193,13 @@ pub fn dependency_report() -> DependencyReport {
     } else {
         None
     };
+    let clipboard_tool = if which("xclip").is_ok() {
+        Some(ClipboardTool::Xclip)
+    } else if which("xsel").is_ok() {
+        Some(ClipboardTool::Xsel)
+    } else {
+        None
+    };
 
     DependencyReport {
         api_key_present: env::var("ZHIPUAI_API_KEY")
@@ -183,6 +210,7 @@ pub fn dependency_report() -> DependencyReport {
             .unwrap_or(false),
         x11_session_detected: session_type.is_empty() || session_type.eq_ignore_ascii_case("x11"),
         xdotool_present: which("xdotool").is_ok(),
+        clipboard_tool,
         recorder,
     }
 }
@@ -192,10 +220,15 @@ pub fn doctor_output(report: &DependencyReport) -> (bool, Vec<String>) {
         .recorder
         .map(|kind| kind.to_string())
         .unwrap_or_else(|| "missing".to_string());
+    let clipboard_tool = report
+        .clipboard_tool
+        .map(|tool| tool.to_string())
+        .unwrap_or_else(|| "missing".to_string());
     let ok = report.api_key_present
         && report.x11_display_present
         && report.x11_session_detected
         && report.xdotool_present
+        && report.clipboard_tool.is_some()
         && report.recorder.is_some();
 
     let mut lines = vec![
@@ -215,6 +248,7 @@ pub fn doctor_output(report: &DependencyReport) -> (bool, Vec<String>) {
             "xdotool: {}",
             status_text(report.xdotool_present, "ok", "missing")
         ),
+        format!("clipboard tool: {clipboard_tool}"),
         format!("recorder: {recorder}"),
     ];
 
@@ -223,6 +257,9 @@ pub fn doctor_output(report: &DependencyReport) -> (bool, Vec<String>) {
     }
     if !report.xdotool_present {
         lines.push("hint: install xdotool".to_string());
+    }
+    if report.clipboard_tool.is_none() {
+        lines.push("hint: install xclip or xsel".to_string());
     }
     if report.recorder.is_none() {
         lines.push("hint: install ffmpeg or alsa-utils".to_string());
@@ -307,18 +344,63 @@ pub fn inject_text(text: &str) -> Result<()> {
     if text.is_empty() {
         return Ok(());
     }
-    log_info(format!("injecting delta into focused window: {:?}", text));
+    let clipboard_tool = if which("xclip").is_ok() {
+        ClipboardTool::Xclip
+    } else if which("xsel").is_ok() {
+        ClipboardTool::Xsel
+    } else {
+        bail!("missing clipboard tool; install xclip or xsel");
+    };
+
+    log_info(format!(
+        "injecting transcript through clipboard paste with {clipboard_tool}: {:?}",
+        text
+    ));
+    set_clipboard_text(clipboard_tool, text)?;
+    thread::sleep(CLIPBOARD_PASTE_DELAY);
     Command::new("xdotool")
-        .arg("type")
-        .arg("--delay")
-        .arg("0")
+        .arg("key")
         .arg("--clearmodifiers")
-        .arg(text)
+        .arg("ctrl+v")
         .status()
         .context("failed to execute xdotool")?
         .success()
         .then_some(())
         .ok_or_else(|| anyhow!("xdotool returned non-zero status"))
+}
+
+fn set_clipboard_text(tool: ClipboardTool, text: &str) -> Result<()> {
+    let mut command = match tool {
+        ClipboardTool::Xclip => {
+            let mut command = Command::new("xclip");
+            command.arg("-selection").arg("clipboard");
+            command
+        }
+        ClipboardTool::Xsel => {
+            let mut command = Command::new("xsel");
+            command.arg("--clipboard").arg("--input");
+            command
+        }
+    };
+
+    let mut child = command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .with_context(|| format!("failed to start clipboard tool {tool}"))?;
+    child
+        .stdin
+        .take()
+        .context("failed to open clipboard tool stdin")?
+        .write_all(text.as_bytes())
+        .context("failed to write transcript to clipboard tool")?;
+    child
+        .wait()
+        .with_context(|| format!("failed waiting clipboard tool {tool}"))?
+        .success()
+        .then_some(())
+        .ok_or_else(|| anyhow!("clipboard tool {tool} returned non-zero status"))
 }
 
 pub async fn transcribe_file(audio_path: &Path) -> Result<String> {
@@ -689,6 +771,7 @@ mod tests {
             x11_display_present: false,
             x11_session_detected: false,
             xdotool_present: false,
+            clipboard_tool: None,
             recorder: None,
         };
         let (ok, lines) = doctor_output(&report);
@@ -699,6 +782,7 @@ mod tests {
                 .any(|line| line.contains("export ZHIPUAI_API_KEY"))
         );
         assert!(lines.iter().any(|line| line.contains("xdotool")));
+        assert!(lines.iter().any(|line| line.contains("xclip or xsel")));
         assert!(
             lines
                 .iter()
