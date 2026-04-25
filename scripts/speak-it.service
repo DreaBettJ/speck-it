@@ -1,0 +1,16 @@
+[Unit]
+Description=speak-it - Press-to-talk STT client for Linux X11
+Documentation=https://github.com/DreaBettJ/speck-it
+After=network-online.target graphical-session.target
+Wants=network-online.target
+BindsTo=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/speak-it daemon
+Restart=on-failure
+RestartSec=3
+EnvironmentFile=%h/.config/speak-it/env
+
+[Install]
+WantedBy=default.target

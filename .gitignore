@@ -1,1 +1,15 @@
+# 构建产物
 /target
+
+# 运行时日志
+speak-it.log
+
+# 录音文件
+speak-it-*.wav
+.speak-it-*.wav.part
+
+# 转录结果文件
+speak-it-*.txt
+
+# PID 文件
+speak-it.pid
